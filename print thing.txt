@@ -1,0 +1,713 @@
+.intel_syntax noprefix
+
+.global itoa
+.global atoi
+.global _start
+
+
+# ================================================================
+# PROGRAM ENTRY POINT
+# ================================================================
+#
+# This program:
+#
+#   1. Reads argc.
+#   2. If there are no arguments, prints 0.
+#   3. Otherwise, walks through argv[1], argv[2], ...
+#   4. Converts each argument from ASCII to an integer using atoi.
+#   5. Adds all integers together.
+#   6. Converts the final sum back to ASCII using itoa.
+#   7. Prints the result.
+#
+#
+# Stack layout at program start:
+#
+#   [rsp]       = argc
+#   [rsp+8]     = argv[0]
+#   [rsp+16]    = argv[1]
+#   [rsp+24]    = argv[2]
+#   [rsp+32]    = argv[3]
+#   ...
+#
+#
+# Register usage:
+#
+#   r12 = running total
+#   r13 = argc
+#   r14 = current argv pointer
+#   r15 = end of argv
+#
+# ================================================================
+
+
+_start:
+
+    # ------------------------------------------------------------
+    # Read argc
+    # ------------------------------------------------------------
+
+    mov r13, qword ptr [rsp]
+
+    # total = 0
+    xor r12, r12
+
+
+    # ------------------------------------------------------------
+    # Check whether there are any arguments
+    #
+    # argc = 1 means only argv[0] exists.
+    # ------------------------------------------------------------
+
+    cmp r13, 1
+    je no_args
+
+
+    # ------------------------------------------------------------
+    # r14 = address of argv[1]
+    # ------------------------------------------------------------
+
+    lea r14, [rsp + 16]
+
+
+    # ------------------------------------------------------------
+    # Calculate the address immediately after the last argument
+    #
+    # argc tells us how many argv pointers exist.
+    #
+    # Each pointer is 8 bytes.
+    #
+    # rsp + argc*8 + 8
+    #
+    # gives the address after the final argv pointer.
+    # ------------------------------------------------------------
+
+    mov r15, r13
+    imul r15, 8
+    add r15, rsp
+    add r15, 8
+
+
+    # ------------------------------------------------------------
+    # Process all arguments
+    # ------------------------------------------------------------
+
+    call boss
+
+
+
+# ================================================================
+# CONVERT FINAL TOTAL TO ASCII AND PRINT IT
+# ================================================================
+#
+# r12 contains the final sum.
+#
+# ================================================================
+
+begin_itoa:
+
+    # ------------------------------------------------------------
+    # Clear working registers
+    # ------------------------------------------------------------
+
+    xor r8, r8
+    xor r9, r9
+    xor r10, r10
+    xor rdx, rdx
+    xor rcx, rcx
+
+
+    # ------------------------------------------------------------
+    # Create a 32-byte scratch buffer on the stack
+    # ------------------------------------------------------------
+
+    sub rsp, 32
+
+    # r15 = buffer address
+    mov r15, rsp
+
+    # itoa destination
+    mov rsi, r15
+
+    # itoa input = total
+    mov rdi, r12
+
+
+    # ------------------------------------------------------------
+    # Convert integer → ASCII string
+    # ------------------------------------------------------------
+
+    call itoa
+
+
+    # ------------------------------------------------------------
+    # Write result to stdout
+    #
+    # rax = number of characters returned by itoa
+    # ------------------------------------------------------------
+
+    mov rdx, rax                   # length
+    mov rax, 1                     # sys_write
+    mov rdi, 1                     # stdout
+    mov rsi, r15                   # buffer
+
+    syscall
+
+
+    # ------------------------------------------------------------
+    # Exit successfully
+    # ------------------------------------------------------------
+
+    mov rax, 60                    # sys_exit
+    xor rdi, rdi                   # exit status = 0
+
+    syscall
+
+
+
+# ================================================================
+# NO ARGUMENTS
+# ================================================================
+#
+# If the program is run without arguments:
+#
+#       ./program
+#
+# argc = 1.
+#
+# The program simply prints:
+#
+#       0
+#
+# ================================================================
+
+no_args:
+
+    # Create a small buffer
+    sub rsp, 32
+
+    mov rsi, rsp
+
+    # Store ASCII '0'
+    mov byte ptr [rsi], '0'
+
+
+    # ------------------------------------------------------------
+    # write(1, buffer, 1)
+    # ------------------------------------------------------------
+
+    mov rax, 1                     # sys_write
+    mov rdi, 1                     # stdout
+    mov rdx, 1                     # one byte
+
+    syscall
+
+
+    # ------------------------------------------------------------
+    # exit(0)
+    # ------------------------------------------------------------
+
+    mov rax, 60
+    xor rdi, rdi
+
+    syscall
+
+
+
+# ================================================================
+# BOSS — PROCESS ALL COMMAND-LINE ARGUMENTS
+# ================================================================
+#
+# r14 = current argv pointer
+# r15 = address immediately after the final argv pointer
+#
+# For every argument:
+#
+#       argv[i]
+#          ↓
+#        atoi
+#          ↓
+#       integer
+#          ↓
+#       add to r12
+#
+# ================================================================
+
+boss:
+
+boss_loop:
+
+    # ------------------------------------------------------------
+    # Have we reached the end of argv?
+    # ------------------------------------------------------------
+
+    cmp r14, r15
+    je boss_done
+
+
+    # ------------------------------------------------------------
+    # rdi = current argument string
+    # ------------------------------------------------------------
+
+    mov rdi, qword ptr [r14]
+
+
+    # ------------------------------------------------------------
+    # Convert ASCII → integer
+    # ------------------------------------------------------------
+
+    call atoi
+
+
+    # ------------------------------------------------------------
+    # Add converted number to total
+    # ------------------------------------------------------------
+
+    add r12, rax
+
+
+    # ------------------------------------------------------------
+    # Move to next argv pointer
+    #
+    # Each pointer is 8 bytes.
+    # ------------------------------------------------------------
+
+    add r14, 8
+
+    jmp boss_loop
+
+
+boss_done:
+
+    # Finished processing all arguments
+    jmp begin_itoa
+
+
+
+# ================================================================
+# ITOA — INTEGER TO ASCII
+# ================================================================
+#
+# Converts the integer in rdi into an ASCII string.
+#
+# INPUT:
+#
+#   rdi = integer
+#   rsi = destination buffer
+#
+# OUTPUT:
+#
+#   rax = string length
+#
+# Example:
+#
+#   rdi = 123
+#
+#   buffer:
+#       "123"
+#
+#   rax:
+#       3
+#
+# ================================================================
+
+itoa:
+
+    # ------------------------------------------------------------
+    # Clear working registers
+    # ------------------------------------------------------------
+
+    xor r8, r8
+    xor r9, r9
+    xor r10, r10
+    xor rdx, rdx
+    xor rcx, rcx
+
+
+    # Copy input number to rax
+    mov rax, rdi
+
+
+    # ------------------------------------------------------------
+    # Special case: zero
+    # ------------------------------------------------------------
+
+    cmp rax, 0
+    je zero
+
+
+    # ------------------------------------------------------------
+    # Start with one digit
+    # ------------------------------------------------------------
+
+    mov r9, 1
+
+
+    # ------------------------------------------------------------
+    # Check whether number is negative
+    # ------------------------------------------------------------
+
+    cmp rax, 0
+    jl negate
+
+
+    # Positive number
+    call loop
+
+    ret
+
+
+
+# ================================================================
+# ITOA — NEGATIVE NUMBER
+# ================================================================
+#
+# Example:
+#
+#       -123
+#
+# Writes '-' first, then processes the absolute value.
+#
+# ================================================================
+
+negate:
+
+    # Convert negative value to positive
+    neg rax
+
+
+    # Write '-' into the output buffer
+    mov byte ptr [rsi], '-'
+
+
+    # Move destination past '-'
+    inc rsi
+
+
+    # Remember that the final string contains a sign
+    mov r10, 1
+
+
+    # Process the digits
+    call loop
+
+    ret
+
+
+
+# ================================================================
+# ITOA — ZERO
+# ================================================================
+
+zero:
+
+    # ASCII '0' = 0x30
+    mov byte ptr [rsi], 0x30
+
+    # String length = 1
+    mov rax, 1
+
+    ret
+
+
+
+# ================================================================
+# ITOA — DIVIDE NUMBER INTO DIGITS
+# ================================================================
+#
+# Repeatedly divides the number by 10.
+#
+# Example:
+#
+#       123 / 10
+#
+#       quotient  = 12
+#       remainder = 3
+#
+# Then:
+#
+#       12 / 10
+#
+#       quotient  = 1
+#       remainder = 2
+#
+# Then:
+#
+#       1 / 10
+#
+#       quotient  = 0
+#       remainder = 1
+#
+#
+# The remainders are pushed onto the stack:
+#
+#       3
+#       2
+#       1
+#
+# They will later be popped in reverse order:
+#
+#       1
+#       2
+#       3
+#
+# r9 = number of digits
+#
+# ================================================================
+
+loop:
+
+    # Clear upper half of dividend
+    xor rdx, rdx
+
+
+    # Divisor = 10
+    mov rcx, 10
+
+
+    # Divide RDX:RAX by RCX
+    div rcx
+
+
+    # Save remainder
+    push rdx
+
+
+    # ------------------------------------------------------------
+    # If quotient = 0, there are no more digits.
+    # ------------------------------------------------------------
+
+    cmp rax, 0
+    je prntr
+
+
+    # Another digit exists
+    inc r9
+
+    jmp loop
+
+
+
+# ================================================================
+# ITOA — POP DIGITS AND BUILD STRING
+# ================================================================
+#
+# The digits are currently stored on the stack in reverse order.
+#
+# Pop each digit, convert it to ASCII, and place it in the
+# destination buffer.
+#
+# ================================================================
+
+prntr:
+
+    # Output position = 0
+    xor r8, r8
+
+
+prnt:
+
+    # Get next digit from stack
+    pop rax
+
+
+    # Convert numerical digit to ASCII
+    add al, 0x30
+
+
+    # Store digit in output buffer
+    mov byte ptr [rsi+r8], al
+
+
+    # Move to next output position
+    inc r8
+
+
+    # Have all digits been processed?
+    cmp r8, r9
+    jne prnt
+
+
+    # ------------------------------------------------------------
+    # Return string length
+    #
+    # length = digits + sign
+    # ------------------------------------------------------------
+
+    mov rax, r9
+    add rax, r10
+
+    ret
+
+
+
+# ================================================================
+# ATOI — ASCII TO INTEGER
+# ================================================================
+#
+# Converts a decimal ASCII string into an integer.
+#
+# INPUT:
+#
+#   rdi = address of string
+#
+# OUTPUT:
+#
+#   rax = integer
+#
+# Examples:
+#
+#       "123"  → 123
+#       "-123" → -123
+#
+# ================================================================
+
+atoi:
+
+    # Accumulator = 0
+    xor rdx, rdx
+
+
+    # ------------------------------------------------------------
+    # Check for negative sign
+    # ------------------------------------------------------------
+
+    cmp byte ptr [rdi], '-'
+    je rem
+
+
+    # Positive number
+    call atoi_f
+
+    ret
+
+
+
+# ================================================================
+# ATOI — HANDLE NEGATIVE NUMBER
+# ================================================================
+
+rem:
+
+    # Skip '-'
+    inc rdi
+
+
+    # Convert remaining digits
+    call atoi_f
+
+
+    # Make result negative
+    neg rax
+
+    ret
+
+
+
+# ================================================================
+# ATOI — PROCESS DIGITS
+# ================================================================
+#
+# Builds the integer using:
+#
+#       result = result * 10 + digit
+#
+# Example:
+#
+#       "123"
+#
+#       0 * 10 + 1 = 1
+#       1 * 10 + 2 = 12
+#      12 * 10 + 3 = 123
+#
+# rdx = accumulator
+#
+# ================================================================
+
+atoi_f:
+
+    # ------------------------------------------------------------
+    # Is current character greater than '9'?
+    # ------------------------------------------------------------
+
+    cmp byte ptr [rdi], '9'
+    ja don
+
+
+    # ------------------------------------------------------------
+    # Is current character less than '0'?
+    # ------------------------------------------------------------
+
+    cmp byte ptr [rdi], '0'
+    jb don
+
+
+    # ------------------------------------------------------------
+    # Convert ASCII digit → integer digit
+    # ------------------------------------------------------------
+
+    call atoi_digit
+
+
+    # ------------------------------------------------------------
+    # accumulator = accumulator * 10 + digit
+    # ------------------------------------------------------------
+
+    imul rdx, 10
+    add rdx, rax
+
+
+    # Move to next character
+    inc rdi
+
+
+    # Process next character
+    call atoi_f
+
+    ret
+
+
+
+# ================================================================
+# ATOI — FINISH
+# ================================================================
+
+don:
+
+    # Return accumulated integer
+    mov rax, rdx
+
+    ret
+
+
+
+# ================================================================
+# ATOI_DIGIT — CONVERT ONE ASCII DIGIT
+# ================================================================
+#
+# Converts:
+#
+#       '0' → 0
+#       '1' → 1
+#       ...
+#       '9' → 9
+#
+# INPUT:
+#
+#   rdi = address of ASCII character
+#
+# OUTPUT:
+#
+#   rax = numerical digit
+#
+# ================================================================
+
+atoi_digit:
+
+    # Load ASCII character
+    movsx rax, byte ptr [rdi]
+
+
+    # ASCII '0' = 48
+    sub rax, 48
+
+    ret
